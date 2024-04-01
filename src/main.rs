@@ -1,7 +1,7 @@
 use std::{
   str::FromStr,
   sync::Arc,
-  time::{Duration, SystemTime},
+  time::{Duration, Instant},
 };
 
 use clap::{Parser, Subcommand};
@@ -27,8 +27,9 @@ enum Commands {
     #[arg(short, long)]
     mode: Option<WakeMode>,
 
-    /// Update the wake guard
-    #[arg(value_parser = parse_duration_update)]
+    /// Update the duration of the wake guard. Prefix with "+" to add, "-" to subtract.
+    /// Duration syntax: "1h", "30m", "1d", etc.
+    #[arg(value_parser = parse_duration_update, allow_hyphen_values = true)]
     update: DurationUpdate,
   },
 }
@@ -77,29 +78,27 @@ impl FromStr for WakeMode {
   }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 struct WakeGuard {
   mode: WakeMode,
-  until: Option<SystemTime>,
+  until: Option<Instant>,
 }
 
 impl WakeGuard {
-  fn new(mode: WakeMode, until: Option<SystemTime>) -> Self {
+  fn new(mode: WakeMode, until: Option<Instant>) -> Self {
     Self { mode, until }
   }
 
   fn remaining(&self) -> Option<Duration> {
-    self
-      .until
-      .and_then(|until| until.duration_since(SystemTime::now()).ok())
+    self.until.map(|until| until.duration_since(Instant::now()))
   }
 
   fn remaining_message(&self) -> String {
     match self.remaining() {
       None => "".to_string(),
       Some(remaining) => {
-        let min = remaining.as_secs() / 60;
-        format!("{}m", min)
+        let min = remaining.as_secs() as f32 / 60.0;
+        format!("{}m", min.ceil() as u64)
       }
     }
   }
@@ -153,12 +152,13 @@ impl Inner {
 impl Daemon {
   async fn sleep_duration(&self) -> Duration {
     let inner = self.inner.read().await;
-    inner
+    let remaining = inner
       .wake_guard
       .as_ref()
-      .and_then(|wg| wg.until)
-      .and_then(|until| until.duration_since(SystemTime::now()).ok())
-      .unwrap_or_default()
+      .and_then(|wg| wg.remaining())
+      .filter(|wg| wg < &UPDATE_DURATION);
+
+    remaining.unwrap_or(UPDATE_DURATION)
   }
 
   async fn keep_awake(&mut self) {
@@ -167,7 +167,7 @@ impl Daemon {
       return;
     };
 
-    let now = SystemTime::now();
+    let now = Instant::now();
     match wg.until {
       None => return,
       Some(until) if until < now => {
@@ -210,9 +210,10 @@ impl Daemon {
       self.keep_awake().await;
       self.send_report().await;
 
+      let sleep_duration = self.sleep_duration().await;
       tokio::select! {
         _ = receiver.recv() => {}
-        _ = tokio::time::sleep(UPDATE_DURATION) => {}
+        _ = tokio::time::sleep(sleep_duration) => {}
       }
     }
   }
@@ -225,7 +226,7 @@ impl DbusService {
 
     let mut inner = self.inner.write().await;
     let wg = inner.wake_guard.as_ref();
-    let now = SystemTime::now();
+    let now = Instant::now();
 
     let new_until = match (wg, update) {
       (Some(wg), Add(duration)) => wg.until.map(|until| until + duration),
