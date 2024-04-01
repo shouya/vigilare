@@ -64,7 +64,7 @@ enum WakeMode {
 }
 
 impl WakeMode {
-  async fn keep_await(&self) -> Option<WakeToken> {
+  async fn stay_awake(&self) -> Option<WakeToken> {
     match self {
       WakeMode::Idle => {
         // run `xset s reset` to reset the idle timer
@@ -130,15 +130,21 @@ trait LogindManager {
   ) -> zbus::Result<zbus::zvariant::OwnedFd>;
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
 struct WakeGuard {
   mode: WakeMode,
   until: Option<Instant>,
+  // Keep an opaque token used by some inhibitors. We expect dropping
+  // the token releases the inhibitor.
+  token: Option<WakeToken>,
 }
 
 impl WakeGuard {
   fn new(mode: WakeMode, until: Option<Instant>) -> Self {
-    Self { mode, until }
+    Self {
+      mode,
+      until,
+      token: None,
+    }
   }
 
   fn remaining(&self) -> Option<Duration> {
@@ -160,10 +166,9 @@ impl WakeGuard {
 struct Daemon {
   inner: Arc<RwLock<Inner>>,
   previous_report: Option<StatusReport>,
-  wake_token: Option<WakeToken>,
 }
 
-#[derive(Default, Debug)]
+#[derive(Default)]
 struct Inner {
   wake_guard: Option<WakeGuard>,
 }
@@ -183,7 +188,7 @@ struct StatusReport {
 
 impl Inner {
   fn report(&self) -> StatusReport {
-    let message = match self.wake_guard {
+    let message = match &self.wake_guard {
       None => String::new(),
       Some(wake_guard) => {
         format!("\u{2615}{}", wake_guard.remaining_message())
@@ -191,11 +196,12 @@ impl Inner {
     };
     let remaining_seconds = self
       .wake_guard
+      .as_ref()
       .and_then(|wg| wg.remaining().map(|d| d.as_secs()));
 
     StatusReport {
       active: self.wake_guard.is_some(),
-      mode: self.wake_guard.map(|wg| wg.mode),
+      mode: self.wake_guard.as_ref().map(|wg| wg.mode),
       remaining_seconds,
       message,
     }
@@ -217,7 +223,6 @@ impl Daemon {
   async fn stay_awake(&mut self) {
     let mut inner = self.inner.write().await;
     let Some(wg) = inner.wake_guard.as_mut() else {
-      self.wake_token.take();
       return;
     };
 
@@ -226,14 +231,12 @@ impl Daemon {
       None => return,
       Some(until) if until < now => {
         inner.wake_guard.take();
-        self.wake_token.take();
         return;
       }
       _ => {}
     }
 
-    let wake_token = wg.mode.keep_await().await;
-    self.wake_token = wake_token;
+    wg.token = wg.mode.stay_awake().await;
   }
 
   async fn send_report(&mut self) {
