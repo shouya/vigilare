@@ -8,24 +8,36 @@ use clap::{Parser, Subcommand};
 use duration_string::DurationString;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, RwLock};
-use zbus::zvariant::Optional;
+use zbus::zvariant::{Optional, Type};
 
 #[derive(Parser)]
 struct Cli {
-  #[command(subcommand)]
-  subcmd: Option<Commands>,
+  #[clap(subcommand)]
+  cmd: Commands,
 }
 
 #[derive(Subcommand)]
 enum Commands {
-  /// Prevent screensaver/lockscreen from showing by resetting X11 idle time
-  Lock {
-    mode: Option<LockMode>,
+  /// Start the daemon
+  Daemon,
 
-    #[clap(short, long, default_value = "1h", value_parser = parse_opt_duration)]
-    duration: Option<Duration>,
+  /// Control the daemon
+  Msg {
+    /// Set wake mode (idle or sleep)
+    #[arg(short, long)]
+    mode: Option<WakeMode>,
+
+    /// Update the wake guard
+    #[arg(value_parser = parse_duration_update)]
+    update: DurationUpdate,
   },
-  Unlock,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Type)]
+enum DurationUpdate {
+  Add(Duration),
+  Sub(Duration),
+  Set(Duration),
 }
 
 const UPDATE_DURATION: Duration = Duration::from_secs(60);
@@ -41,37 +53,41 @@ const UPDATE_DURATION: Duration = Duration::from_secs(60);
   zbus::zvariant::Type,
 )]
 #[serde(rename_all = "lowercase")]
-enum LockMode {
+enum WakeMode {
   #[default]
   Idle,
   Sleep,
 }
 
-impl LockMode {
+impl WakeMode {
   async fn keep_await(&self) {
     println!("keeping awake: {:?}", self);
   }
 }
 
-impl FromStr for LockMode {
+impl FromStr for WakeMode {
   type Err = String;
 
   fn from_str(s: &str) -> Result<Self, Self::Err> {
     match s {
-      "idle" => Ok(LockMode::Idle),
-      "sleep" => Ok(LockMode::Sleep),
+      "idle" => Ok(WakeMode::Idle),
+      "sleep" => Ok(WakeMode::Sleep),
       _ => Err("invalid mode".to_string()),
     }
   }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
-struct Lock {
-  mode: LockMode,
+struct WakeGuard {
+  mode: WakeMode,
   until: Option<SystemTime>,
 }
 
-impl Lock {
+impl WakeGuard {
+  fn new(mode: WakeMode, until: Option<SystemTime>) -> Self {
+    Self { mode, until }
+  }
+
   fn remaining(&self) -> Option<Duration> {
     self
       .until
@@ -97,37 +113,37 @@ struct Daemon {
 
 #[derive(Default, Debug)]
 struct Inner {
-  lock: Option<Lock>,
+  wake_guard: Option<WakeGuard>,
 }
 
-struct DbusIdleDaemon {
+struct DbusService {
   signal: mpsc::Sender<()>,
   inner: Arc<RwLock<Inner>>,
 }
 
 #[derive(Serialize, Debug, Clone, PartialEq)]
 struct StatusReport {
-  locked: bool,
-  mode: Option<LockMode>,
+  active: bool,
+  mode: Option<WakeMode>,
   remaining_seconds: Option<u64>,
   message: String,
 }
 
 impl Inner {
   fn report(&self) -> StatusReport {
-    let message = match self.lock {
+    let message = match self.wake_guard {
       None => String::new(),
-      Some(lock) => {
-        format!("\u{2615}{}", lock.remaining_message())
+      Some(wake_guard) => {
+        format!("\u{2615}{}", wake_guard.remaining_message())
       }
     };
     let remaining_seconds = self
-      .lock
-      .and_then(|lock| lock.remaining().map(|d| d.as_secs()));
+      .wake_guard
+      .and_then(|wg| wg.remaining().map(|d| d.as_secs()));
 
     StatusReport {
-      locked: self.lock.is_some(),
-      mode: self.lock.map(|lock| lock.mode),
+      active: self.wake_guard.is_some(),
+      mode: self.wake_guard.map(|wg| wg.mode),
       remaining_seconds,
       message,
     }
@@ -135,23 +151,33 @@ impl Inner {
 }
 
 impl Daemon {
+  async fn sleep_duration(&self) -> Duration {
+    let inner = self.inner.read().await;
+    inner
+      .wake_guard
+      .as_ref()
+      .and_then(|wg| wg.until)
+      .and_then(|until| until.duration_since(SystemTime::now()).ok())
+      .unwrap_or_default()
+  }
+
   async fn keep_awake(&mut self) {
     let mut inner = self.inner.write().await;
-    let Some(lock) = inner.lock.as_mut() else {
+    let Some(wg) = inner.wake_guard.as_mut() else {
       return;
     };
 
     let now = SystemTime::now();
-    match lock.until {
+    match wg.until {
       None => return,
       Some(until) if until < now => {
-        inner.lock.take();
+        inner.wake_guard.take();
         return;
       }
       _ => {}
     }
 
-    lock.mode.keep_await().await;
+    wg.mode.keep_await().await;
   }
 
   async fn send_report(&mut self) {
@@ -170,13 +196,13 @@ impl Daemon {
 
   async fn run(&mut self) -> Result<(), zbus::Error> {
     let (signal, mut receiver) = mpsc::channel(1);
-    let dbus_service = DbusIdleDaemon {
+    let dbus_service = DbusService {
       inner: self.inner.clone(),
       signal,
     };
     let _conn = zbus::connection::Builder::session()?
-      .name("org.shou.IdleDaemon")?
-      .serve_at("/org/shou/IdleDaemon", dbus_service)?
+      .name("org.shou.WakeGuard")?
+      .serve_at("/org/shou/WakeGuard", dbus_service)?
       .build()
       .await?;
 
@@ -192,81 +218,90 @@ impl Daemon {
   }
 }
 
-#[zbus::interface(name = "org.shou.IdleDaemon")]
-impl DbusIdleDaemon {
-  async fn lock(&self, mode: LockMode, until_epoch: Optional<u64>) {
-    let mut inner = self.inner.write().await;
-    let until =
-      until_epoch.map(|ts| SystemTime::UNIX_EPOCH + Duration::from_secs(ts));
-    inner.lock.replace(Lock { mode, until });
-    self.signal.send(()).await.expect("failed to send signal");
-  }
+#[zbus::interface(name = "org.shou.WakeGuard")]
+impl DbusService {
+  async fn update(&self, mode: Optional<WakeMode>, update: DurationUpdate) {
+    use DurationUpdate::{Add, Set, Sub};
 
-  async fn unlock(&self) {
     let mut inner = self.inner.write().await;
-    inner.lock.take();
+    let wg = inner.wake_guard.as_ref();
+    let now = SystemTime::now();
+
+    let new_until = match (wg, update) {
+      (Some(wg), Add(duration)) => wg.until.map(|until| until + duration),
+      (Some(wg), Sub(duration)) => wg.until.map(|until| until - duration),
+      (Some(_wg), Set(duration)) => Some(now + duration),
+      (None, Add(duration)) => Some(now + duration),
+      (None, Set(duration)) => Some(now + duration),
+      (None, Sub(_)) => Some(now),
+    };
+
+    // deactivate if the new until is in the past
+    if new_until.is_some_and(|t| t <= now) {
+      inner.wake_guard.take();
+      self.signal.send(()).await.expect("failed to send signal");
+      return;
+    }
+
+    let mode = mode.or_else(|| wg.map(|wg| wg.mode)).unwrap_or_default();
+    inner.wake_guard.replace(WakeGuard::new(mode, new_until));
     self.signal.send(()).await.expect("failed to send signal");
   }
 }
 
 #[zbus::proxy(
-  interface = "org.shou.IdleDaemon",
-  default_service = "org.shou.IdleDaemon",
-  default_path = "/org/shou/IdleDaemon"
+  interface = "org.shou.WakeGuard",
+  default_service = "org.shou.WakeGuard",
+  default_path = "/org/shou/WakeGuard"
 )]
-trait DbusIdleDaemon {
-  async fn lock(
+trait DbusWakeGuard {
+  async fn update(
     &self,
-    mode: LockMode,
-    until_epoch: Optional<u64>,
+    mode: Optional<WakeMode>,
+    update: DurationUpdate,
   ) -> zbus::Result<()>;
-  async fn unlock(&self) -> zbus::Result<()>;
 }
 
-async fn lock(
-  mode: LockMode,
-  duration: Option<Duration>,
+async fn update_wake_guard(
+  mode: Option<WakeMode>,
+  update: DurationUpdate,
 ) -> Result<(), zbus::Error> {
   let conn = zbus::Connection::session().await?;
-  let proxy = DbusIdleDaemonProxy::new(&conn).await?;
-  let until = duration.map(|d| SystemTime::now() + d);
-  let until_epoch = until.map(|until| {
-    until
-      .duration_since(SystemTime::UNIX_EPOCH)
-      .unwrap()
-      .as_secs()
-  });
-
-  proxy.lock(mode, until_epoch.into()).await?;
-  Ok(())
-}
-
-async fn unlock() -> Result<(), zbus::Error> {
-  let conn = zbus::Connection::session().await?;
-  let proxy = DbusIdleDaemonProxy::new(&conn).await?;
-  proxy.unlock().await?;
+  let proxy = DbusWakeGuardProxy::new(&conn).await?;
+  proxy.update(mode.into(), update).await?;
   Ok(())
 }
 
 #[tokio::main]
 async fn main() {
-  use Commands::{Lock, Unlock};
   let cli = Cli::parse();
 
-  match cli.subcmd {
-    None => {
+  match cli.cmd {
+    Commands::Daemon => {
       Daemon::default().run().await.expect("Failed to run daemon");
     }
-    Some(Lock { mode, duration }) => {
-      let mode = mode.unwrap_or_default();
-      lock(mode, duration).await.expect("Failed to lock");
-    }
-    Some(Unlock) => {
-      unlock().await.expect("Failed to unlock");
+    Commands::Msg { mode, update } => {
+      update_wake_guard(mode, update)
+        .await
+        .expect("Failed to update");
     }
   }
 }
 
-fn parse_opt_duration(s: &str) -> Result<Duration, String> {
-  Ok(DurationString::from_str(s)?.into())
+fn parse_duration_update(s: &str) -> Result<DurationUpdate, String> {
+  match &s[..1] {
+    "+" => {
+      let duration = DurationString::from_str(&s[1..])?.into();
+      Ok(DurationUpdate::Add(duration))
+    }
+    "-" => {
+      let duration = DurationString::from_str(&s[1..])?.into();
+      Ok(DurationUpdate::Sub(duration))
+    }
+    "0" => Ok(DurationUpdate::Set(Duration::ZERO)),
+    _ => {
+      let duration = DurationString::from_str(s)?.into();
+      Ok(DurationUpdate::Set(duration))
+    }
+  }
 }
