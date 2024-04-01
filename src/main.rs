@@ -7,7 +7,10 @@ use std::{
 use clap::{Parser, Subcommand};
 use duration_string::DurationString;
 use serde::{Deserialize, Serialize};
-use tokio::sync::{mpsc, RwLock};
+use tokio::{
+  process::Command,
+  sync::{mpsc, RwLock},
+};
 use zbus::zvariant::{Optional, Type};
 
 #[derive(Parser)]
@@ -61,8 +64,37 @@ enum WakeMode {
 }
 
 impl WakeMode {
-  async fn keep_await(&self) {
-    println!("keeping awake: {:?}", self);
+  async fn keep_await(&self) -> Option<WakeToken> {
+    match self {
+      WakeMode::Idle => {
+        // run `xset s reset` to reset the idle timer
+        Command::new("xset")
+          .arg("s")
+          .arg("reset")
+          .output()
+          .await
+          .expect("failed to run xset s reset");
+
+        None
+      }
+
+      WakeMode::Sleep => {
+        let conn = zbus::Connection::system()
+          .await
+          .expect("failed to connect to session bus");
+
+        let proxy = LogindManagerProxy::new(&conn)
+          .await
+          .expect("failed to create proxy");
+
+        let fd = proxy
+          .inhibit("sleep", "WakeGuard", "user requested", "block")
+          .await
+          .expect("failed to inhibit sleep");
+
+        Some(WakeToken::Logind(fd))
+      }
+    }
   }
 }
 
@@ -76,6 +108,26 @@ impl FromStr for WakeMode {
       _ => Err("invalid mode".to_string()),
     }
   }
+}
+
+enum WakeToken {
+  Logind(#[allow(unused)] zbus::zvariant::OwnedFd),
+}
+
+#[zbus::proxy(
+  interface = "org.freedesktop.login1.Manager",
+  default_service = "org.freedesktop.login1",
+  default_path = "/org/freedesktop/login1"
+)]
+trait LogindManager {
+  /// Inhibit method
+  fn inhibit(
+    &self,
+    what: &str,
+    who: &str,
+    why: &str,
+    mode: &str,
+  ) -> zbus::Result<zbus::zvariant::OwnedFd>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -104,10 +156,11 @@ impl WakeGuard {
   }
 }
 
-#[derive(Default, Debug)]
+#[derive(Default)]
 struct Daemon {
   inner: Arc<RwLock<Inner>>,
   previous_report: Option<StatusReport>,
+  wake_token: Option<WakeToken>,
 }
 
 #[derive(Default, Debug)]
@@ -161,9 +214,10 @@ impl Daemon {
     remaining.unwrap_or(UPDATE_DURATION)
   }
 
-  async fn keep_awake(&mut self) {
+  async fn stay_awake(&mut self) {
     let mut inner = self.inner.write().await;
     let Some(wg) = inner.wake_guard.as_mut() else {
+      self.wake_token.take();
       return;
     };
 
@@ -172,12 +226,14 @@ impl Daemon {
       None => return,
       Some(until) if until < now => {
         inner.wake_guard.take();
+        self.wake_token.take();
         return;
       }
       _ => {}
     }
 
-    wg.mode.keep_await().await;
+    let wake_token = wg.mode.keep_await().await;
+    self.wake_token = wake_token;
   }
 
   async fn send_report(&mut self) {
@@ -207,7 +263,7 @@ impl Daemon {
       .await?;
 
     loop {
-      self.keep_awake().await;
+      self.stay_awake().await;
       self.send_report().await;
 
       let sleep_duration = self.sleep_duration().await;
