@@ -190,9 +190,7 @@ impl Inner {
   fn report(&self) -> StatusReport {
     let message = match &self.wake_guard {
       None => String::new(),
-      Some(wake_guard) => {
-        format!("\u{2615}{}", wake_guard.remaining_message())
-      }
+      Some(wake_guard) => wake_guard.remaining_message(),
     };
     let remaining_seconds = self
       .wake_guard
