@@ -1,0 +1,11 @@
+[Unit]
+Description=wake-guard notification daemon
+PartOf=graphical-session.target
+
+[Service]
+Type=dbus
+BusName=org.shou.WakeGuard
+ExecStart=/usr/bin/wake-guard daemon
+
+[Install]
+WantedBy=graphical-session.target
