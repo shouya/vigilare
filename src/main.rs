@@ -402,6 +402,18 @@ async fn monitor() -> zbus::Result<()> {
   Ok(())
 }
 
+async fn monitor_forever() -> zbus::Result<()> {
+  loop {
+    match monitor().await {
+      Ok(_) => continue,
+      Err(zbus::Error::MethodError(_, _, _)) => {
+        tokio::time::sleep(Duration::from_secs(5)).await
+      }
+      Err(e) => return Err(e),
+    }
+  }
+}
+
 #[tokio::main]
 async fn main() {
   tracing_subscriber::fmt::init();
@@ -416,7 +428,7 @@ async fn main() {
       msg(mode, update).await.expect("Failed to update");
     }
     Commands::Monitor => {
-      monitor().await.expect("Failed to monitor");
+      monitor_forever().await.expect("Failed to monitor");
     }
   }
 }
