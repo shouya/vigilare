@@ -268,9 +268,10 @@ impl Daemon {
     inner.report = new_report;
     drop(inner);
 
-    let iface = iface_ref.get_mut().await;
+    let context = iface_ref.signal_context();
+    let iface = iface_ref.get().await;
     iface
-      .status_report_changed(iface_ref.signal_context())
+      .status_report_changed(context)
       .await
       .expect("failed to send change signal");
   }
@@ -338,14 +339,16 @@ impl DbusService {
       (None, Sub(_)) => Some(now),
     };
 
+    let new_mode = mode.or_else(|| wg.map(|wg| wg.mode)).unwrap_or_default();
+    drop(inner);
+
     // deactivate if the new until is in the past
     if new_until.is_some_and(|t| t <= now) {
       self.signal.send(None).await.expect("failed to send signal");
       return Ok(());
     }
 
-    let mode = mode.or_else(|| wg.map(|wg| wg.mode)).unwrap_or_default();
-    let wake_guard = WakeGuard::new(mode, new_until);
+    let wake_guard = WakeGuard::new(new_mode, new_until);
     self
       .signal
       .send(Some(wake_guard))
