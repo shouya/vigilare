@@ -131,7 +131,7 @@ mod logind {
       let manager = LogindManagerProxy::new(&self.conn).await?;
 
       let fd = manager
-        .inhibit("sleep", "wake-guard", "user request", "block")
+        .inhibit("sleep", "vigilare", "user request", "block")
         .await?;
 
       self.fd = Some(fd);
@@ -182,7 +182,7 @@ mod xfce_power_manager {
       self.uninhibit().await?;
 
       let manager = XfcePowerManagerProxy::new(&self.conn).await?;
-      let cookie = manager.inhibit("wake-guard", "stay awake").await?;
+      let cookie = manager.inhibit("vigilare", "stay awake").await?;
       self.cookie = Some(cookie);
       Ok(())
     }
@@ -233,7 +233,7 @@ mod xfce_screen_saver {
       self.uninhibit().await?;
 
       let manager = XfceScreenSaverProxy::new(&self.conn).await?;
-      let cookie = manager.inhibit("wake-guard", "stay awake").await?;
+      let cookie = manager.inhibit("vigilare", "stay awake").await?;
       self.cookie = Some(cookie);
       Ok(())
     }

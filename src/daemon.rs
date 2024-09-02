@@ -69,8 +69,8 @@ impl Daemon {
     let (sender, mut receiver) = mpsc::channel(1);
     let dbus_service = DbusService { sender };
     let conn = zbus::connection::Builder::session()?
-      .name("org.shou.WakeGuard")?
-      .serve_at("/WakeGuard", dbus_service)?
+      .name("org.shou.Vigilare")?
+      .serve_at("/org/shou/Vigilare", dbus_service)?
       .build()
       .await?;
 
@@ -149,7 +149,7 @@ struct DbusService {
   sender: mpsc::Sender<DaemonMessage>,
 }
 
-#[zbus::interface(name = "org.shou.WakeGuard")]
+#[zbus::interface(name = "org.shou.Vigilare")]
 impl DbusService {
   async fn update(&self, update: DurationUpdate) -> zbus::fdo::Result<()> {
     self

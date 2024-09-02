@@ -1,6 +1,6 @@
-* WakeGuard
+* Vigilare
 
-WakeGuard is a DBus based service to inhibit idle/sleep for X11 desktop users. I wrote this program because I need a status bar widget that allows me:
+Vigilare is a DBus based service to inhibit idle/sleep for X11 desktop users. I wrote this program because I need a status bar widget that allows me:
 
 - to quickly adjust inhibition time
 - to select the mode between preventing screen dim and preventing system suspend
@@ -28,7 +28,7 @@ And to my knowledge, there is no such program available.
 
 #+begin_src bash
 cargo build --release
-cp target/release/wakeguard ~/.local/bin
+cp target/release/vigilare ~/.local/bin
 #+end_src
 
 ** Usage
@@ -36,33 +36,33 @@ cp target/release/wakeguard ~/.local/bin
 Here's a sample eww widget just for reference:
 
 #+begin_src lisp
-(deflisten wake-guard :initial
+(deflisten vigilare :initial
   '{"active":false,"mode":null,"remaining_seconds":null,"message":""}'
-  `wake-guard monitor`)
+  `vigilare monitor`)
 
-(defwidget wake-guard-toggle []
+(defwidget vigilare-toggle []
   (tooltip
-   (wake-guard-toggle-tooltip)
+   (vigilare-toggle-tooltip)
    (eventbox
     :cursor "hand"
-    :onclick { wake-guard.mode=="null" ? "wake-guard msg -m idle +15m" :
-               wake-guard.mode=="sleep" ? "wake-guard msg -m idle +0s" :
-               wake-guard.mode=="idle" ? "wake-guard msg -m sleep +0s" : "" }
+    :onclick { vigilare.mode=="null" ? "vigilare msg -m idle +15m" :
+               vigilare.mode=="sleep" ? "vigilare msg -m idle +0s" :
+               vigilare.mode=="idle" ? "vigilare msg -m sleep +0s" : "" }
     :onmiddleclick "(notify-send 'Display off in 2 secs'; sleep 2; xset dpms force off) &"
     :onrightclick "(notify-send 'Suspending in 2 secs'; sleep 2; systemctl suspend) &"
-    :onscroll "test {} = up && wake-guard msg +15m || wake-guard msg -15m"
-    :class { wake-guard.active ? "toggle-enabled" : "toggle-disabled" }
+    :onscroll "test {} = up && vigilare msg +15m || vigilare msg -15m"
+    :class { vigilare.active ? "toggle-enabled" : "toggle-disabled" }
     (box :space-evenly false
-         (box :visible {wake-guard.mode=="null"}
+         (box :visible {vigilare.mode=="null"}
               (icon :text "󰒲"))
-         (box :visible {wake-guard.mode=="sleep"}
+         (box :visible {vigilare.mode=="sleep"}
               (icon :text "󰒳"))
-         (box :visible {wake-guard.mode=="idle"}
+         (box :visible {vigilare.mode=="idle"}
               (icon :text "󰈉"))
-         (label :visible {wake-guard.mode!="null"} :text "${wake-guard.mode}")
-         (label :visible {wake-guard.message!=""} :text "/${wake-guard.message}")))))
+         (label :visible {vigilare.mode!="null"} :text "${vigilare.mode}")
+         (label :visible {vigilare.message!=""} :text "/${vigilare.message}")))))
 
-(defwidget wake-guard-toggle-tooltip []
+(defwidget vigilare-toggle-tooltip []
   (box
    :orientation "v"
    :space-evenly false
@@ -72,6 +72,6 @@ Here's a sample eww widget just for reference:
    (label :xalign 0 :text "Scroll: adjust duration")))
 #+end_src
 
-You must start the dbus service with =wake-guard daemon= before using the widget. I recommend starting it in your X session startup script or systemd user service. An example systemd user service is provided in the repository.
+You must start the dbus service with =vigilare daemon= before using the widget. I recommend starting it in your X session startup script or systemd user service. An example systemd user service is provided in the repository.
 
-Run =wake-guard --help= for detailed usage information.
+Run =vigilare --help= for detailed usage information.

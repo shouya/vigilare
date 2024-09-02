@@ -3,11 +3,11 @@ use std::time::{Duration, SystemTime};
 use futures::StreamExt as _;
 use serde::Serialize;
 
-use crate::protocol::{DbusWakeGuardProxy, DurationUpdate, Status};
+use crate::protocol::{DbusVigilareProxy, DurationUpdate, Status};
 
 pub async fn msg(update: DurationUpdate) -> Result<(), zbus::Error> {
   let conn = zbus::Connection::session().await?;
-  let proxy = DbusWakeGuardProxy::new(&conn).await?;
+  let proxy = DbusVigilareProxy::new(&conn).await?;
   proxy.update(update).await?;
   Ok(())
 }
@@ -46,7 +46,7 @@ impl StatusReport {
 
 async fn monitor() -> zbus::Result<()> {
   let conn = zbus::Connection::session().await?;
-  let proxy = DbusWakeGuardProxy::new(&conn).await?;
+  let proxy = DbusVigilareProxy::new(&conn).await?;
   let status = proxy.status().await?;
   let report = StatusReport::from_status(status);
   let json = report.json();

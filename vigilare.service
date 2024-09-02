@@ -1,0 +1,11 @@
+[Unit]
+Description=Vigilare daemon
+PartOf=graphical-session.target
+
+[Service]
+Type=dbus
+BusName=org.shou.Vigilare
+ExecStart=/usr/bin/vigilare daemon
+
+[Install]
+WantedBy=graphical-session.target

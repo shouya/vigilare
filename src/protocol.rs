@@ -26,11 +26,11 @@ pub struct Status {
 }
 
 #[zbus::proxy(
-  interface = "org.shou.WakeGuard",
-  default_service = "org.shou.WakeGuard",
-  default_path = "/org/shou/WakeGuard"
+  interface = "org.shou.Vigilare",
+  default_service = "org.shou.Vigilare",
+  default_path = "/org/shou/Vigilare"
 )]
-trait DbusWakeGuard {
+trait DbusVigilare {
   async fn update(&self, update: DurationUpdate) -> zbus::Result<()>;
 
   #[zbus(property)]
