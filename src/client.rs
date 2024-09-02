@@ -46,25 +46,59 @@ impl StatusReport {
       message,
     }
   }
+
+  fn next_check_duration(&self) -> Duration {
+    match self.remaining_seconds {
+      None => Duration::MAX,
+      Some(secs) if secs % 60 == 0 => Duration::from_secs(60),
+      Some(secs) => Duration::from_secs(secs % 60),
+    }
+  }
+
+  async fn update(
+    &mut self,
+    proxy: &DbusVigilareProxy<'_>,
+  ) -> zbus::Result<()> {
+    let status = proxy.status().await?;
+    let report = StatusReport::from_status(status);
+    *self = report;
+    Ok(())
+  }
+
+  async fn new_from_proxy(proxy: &DbusVigilareProxy<'_>) -> zbus::Result<Self> {
+    let status = proxy.status().await?;
+    Ok(Self::from_status(status))
+  }
+
+  fn print(&self) {
+    println!("{}", self.json());
+  }
 }
 
 async fn monitor() -> zbus::Result<()> {
   let conn = zbus::Connection::session().await?;
   let proxy = DbusVigilareProxy::new(&conn).await?;
-  let status = proxy.status().await?;
-  let report = StatusReport::from_status(status);
-  let json = report.json();
-  println!("{}", json);
+  let mut report = StatusReport::new_from_proxy(&proxy).await?;
+  report.print();
 
   let mut stream = proxy.receive_status_changed().await;
-  while let Some(changed) = stream.next().await {
-    let status = changed.get().await?;
-    let report = StatusReport::from_status(status);
-    let json = report.json();
-    println!("{}", json);
-  }
 
-  Ok(())
+  loop {
+    tokio::select! {
+      Some(_) = stream.next() => {
+        report.update(&proxy).await?;
+      }
+      _ = tokio::time::sleep(report.next_check_duration()) => {
+        report.update(&proxy).await?;
+      }
+      else => {
+        eprintln!("Dbus stream closed");
+        return Ok(());
+      }
+    }
+
+    report.print();
+  }
 }
 
 pub async fn monitor_forever() -> zbus::Result<()> {
