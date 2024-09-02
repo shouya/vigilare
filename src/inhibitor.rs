@@ -101,7 +101,9 @@ mod xset {
     }
 
     async fn inhibit(&mut self) -> Result<()> {
-      self.uninhibit().await?;
+      if self.task.is_some() {
+        return Ok(());
+      }
 
       let reset_duration = self.interval;
       let task = tokio::spawn(async move {
@@ -167,6 +169,10 @@ mod logind {
     }
 
     async fn inhibit(&mut self) -> Result<()> {
+      if self.fd.is_some() {
+        return Ok(());
+      }
+
       let manager = LogindManagerProxy::new(&self.conn).await?;
 
       let fd = manager
@@ -197,6 +203,7 @@ mod xfce_power_manager {
   )]
   trait XfcePowerManager {
     fn inhibit(&self, application: &str, reason: &str) -> zbus::Result<u32>;
+    #[zbus(name = "UnInhibit")]
     fn uninhibit(&self, cookie: u32) -> zbus::Result<()>;
   }
 
@@ -218,7 +225,9 @@ mod xfce_power_manager {
     }
 
     async fn inhibit(&mut self) -> Result<()> {
-      self.uninhibit().await?;
+      if self.cookie.is_some() {
+        return Ok(());
+      }
 
       let manager = XfcePowerManagerProxy::new(&self.conn).await?;
       let cookie = manager.inhibit("vigilare", "stay awake").await?;
@@ -248,6 +257,7 @@ mod xfce_screen_saver {
   )]
   trait XfceScreenSaver {
     fn inhibit(&self, application: &str, reason: &str) -> zbus::Result<u32>;
+    #[zbus(name = "UnInhibit")]
     fn uninhibit(&self, cookie: u32) -> zbus::Result<()>;
   }
 
@@ -269,7 +279,9 @@ mod xfce_screen_saver {
     }
 
     async fn inhibit(&mut self) -> Result<()> {
-      self.uninhibit().await?;
+      if self.cookie.is_some() {
+        return Ok(());
+      }
 
       let manager = XfceScreenSaverProxy::new(&self.conn).await?;
       let cookie = manager.inhibit("vigilare", "stay awake").await?;
@@ -316,7 +328,10 @@ mod mouse_jitter {
     }
 
     async fn inhibit(&mut self) -> Result<()> {
-      self.uninhibit().await?;
+      if self.task.is_some() {
+        return Ok(());
+      }
+
       let interval = self.interval;
       let history_len = (60.0 / interval.as_secs_f32()).ceil() as usize + 1;
       let mut history = Vec::with_capacity(history_len + 1);

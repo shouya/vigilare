@@ -32,7 +32,11 @@ impl StatusReport {
       .unwrap_or_default();
 
     let remaining_min = duration.as_secs_f32() / 60.0;
-    let message = format!("{}m", remaining_min.ceil() as u64);
+    let message = if msg.active {
+      format!("{}m", remaining_min.ceil() as u64)
+    } else {
+      String::default()
+    };
 
     let remaining_seconds = msg.active.then_some((remaining_min * 60.0) as u64);
 

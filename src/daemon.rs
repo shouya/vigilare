@@ -85,7 +85,10 @@ impl Daemon {
         .expect("Failed to emit status changed");
     };
 
-    info!("Daemon started at {:?}", conn.unique_name());
+    info!(
+      "Daemon started at {}",
+      conn.unique_name().expect("Failed to get unique name")
+    );
     status_changed().await;
 
     loop {
@@ -148,6 +151,13 @@ impl Daemon {
   }
 
   fn status(&self) -> Status {
+    if self.wake_until.is_none() {
+      return Status {
+        wake_until: 0,
+        active: false,
+      };
+    }
+
     let now = Instant::now();
     let wake_until = self.wake_until.unwrap_or(now);
     let wake_after = wake_until.saturating_duration_since(now);
@@ -160,7 +170,7 @@ impl Daemon {
 
     Status {
       wake_until: unix_epoch,
-      active: self.wake_until.is_some(),
+      active: true,
     }
   }
 }
