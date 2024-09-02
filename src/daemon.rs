@@ -4,6 +4,7 @@ use anyhow::Result;
 
 use tokio::sync::{mpsc, oneshot};
 use tracing::info;
+use zbus::object_server::InterfaceRef;
 
 use crate::{
   inhibitor::{self, InhibitMode, Inhibitor},
@@ -72,13 +73,27 @@ impl Daemon {
       .build()
       .await?;
 
+    let iface: InterfaceRef<DbusService> =
+      conn.object_server().interface("/org/shou/Vigilare").await?;
+
+    let status_changed = || async {
+      let signal_ctx = iface.signal_context();
+      let iface = iface.get().await;
+      iface
+        .status_invalidate(signal_ctx)
+        .await
+        .expect("Failed to emit status changed");
+    };
+
     info!("Daemon started at {:?}", conn.unique_name());
+    status_changed().await;
 
     loop {
       match Self::get_event(&mut receiver, &self.wake_until).await {
         DaemonEvent::DurationUpdate(update) => {
           self.update_duration(update)?;
           self.update_inhibitor().await?;
+          status_changed().await;
         }
         DaemonEvent::StatusRequest(sender) => {
           sender.send(self.status()).ok();
@@ -86,9 +101,10 @@ impl Daemon {
         DaemonEvent::Deadline => {
           self.wake_until = None;
           self.update_inhibitor().await?;
+          status_changed().await;
         }
         DaemonEvent::DbusServiceExit => {
-          println!("Dbus service exited");
+          info!("Dbus service exited");
           break;
         }
       }
@@ -118,8 +134,14 @@ impl Daemon {
 
   async fn update_inhibitor(&mut self) -> Result<()> {
     match self.wake_until {
-      None => self.inhibitor.uninhibit().await?,
-      Some(_wake_until) => self.inhibitor.inhibit().await?,
+      None => {
+        info!("Uninhibiting");
+        self.inhibitor.uninhibit().await?
+      }
+      Some(_wake_until) => {
+        info!("Inhibiting");
+        self.inhibitor.inhibit().await?
+      }
     }
 
     Ok(())
