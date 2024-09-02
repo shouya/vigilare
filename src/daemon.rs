@@ -2,13 +2,11 @@ use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::Result;
 
-use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
 use tracing::info;
-use zbus::zvariant::Type;
 
 use crate::{
-  inhibitor::{self, Inhibitor},
+  inhibitor::{self, InhibitMode, Inhibitor},
   protocol::{DurationUpdate, Status},
 };
 
@@ -180,19 +178,4 @@ impl DbusService {
 enum DaemonMessage {
   DurationUpdate(DurationUpdate),
   StatusRequest(oneshot::Sender<Status>),
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Type)]
-#[serde(rename_all = "kebab-case")]
-pub enum InhibitMode {
-  /// Reset the XScreenSaver time with `xset s reset`
-  XSet,
-  /// Inhibit sleep with `systemd-inhibit`
-  Logind,
-  /// Inhibit sleep from xfce4-power-manager
-  Xfce4,
-  /// Inhibit sleep from xfce4-screensaver
-  Xfce4Screensaver,
-  /// Inhibit sleep with occasional mouse jitter
-  MouseJitter,
 }

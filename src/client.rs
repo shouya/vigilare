@@ -29,7 +29,7 @@ impl StatusReport {
     let now = SystemTime::now();
     let duration = (SystemTime::UNIX_EPOCH + epoch)
       .duration_since(now)
-      .expect("failed to calculate duration");
+      .unwrap_or_default();
 
     let remaining_min = duration.as_secs_f32() / 60.0;
     let message = format!("{}m", remaining_min.ceil() as u64);

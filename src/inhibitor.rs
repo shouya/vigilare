@@ -1,8 +1,9 @@
-use std::time::Duration;
+use std::{str::FromStr, time::Duration};
 
 use anyhow::Result;
-
-use crate::InhibitMode;
+use clap::ValueEnum;
+use serde::{Deserialize, Serialize};
+use zbus::zvariant::Type;
 
 #[async_trait::async_trait]
 pub trait Inhibitor {
@@ -11,10 +12,36 @@ pub trait Inhibitor {
   async fn uninhibit(&mut self) -> Result<()>;
 }
 
-pub async fn from_string(s: &str) -> Result<Box<dyn Inhibitor>> {
-  match s {
-    "xset" => from_mode(InhibitMode::XSet).await,
-    _ => Err(anyhow::anyhow!("unknown mechanism: {}", s)),
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Type, ValueEnum)]
+#[serde(rename_all = "kebab-case")]
+#[non_exhaustive]
+pub enum InhibitMode {
+  /// Reset the XScreenSaver time with `xset s reset`
+  Xset,
+  /// Inhibit sleep with `systemd-inhibit`
+  Logind,
+  /// Inhibit sleep from xfce4-power-manager
+  Xfce4PowerManager,
+  /// Inhibit sleep from xfce4-screensaver
+  Xfce4Screensaver,
+  /// Inhibit sleep with occasional mouse jitter
+  MouseJitter,
+}
+
+impl FromStr for InhibitMode {
+  type Err = anyhow::Error;
+
+  fn from_str(s: &str) -> Result<Self> {
+    match s {
+      "xset" => Ok(Self::Xset),
+      "logind" => Ok(Self::Logind),
+      "xfce4-power-manager" => Ok(Self::Xfce4PowerManager),
+      "xfce4" => Ok(Self::Xfce4PowerManager),
+      "xfce4-screensaver" => Ok(Self::Xfce4Screensaver),
+      "mouse-jitter" => Ok(Self::MouseJitter),
+      "mouse" => Ok(Self::MouseJitter),
+      _ => Err(anyhow::anyhow!("unknown mechanism: {}", s)),
+    }
   }
 }
 
@@ -26,8 +53,20 @@ pub async fn from_mode(mode: InhibitMode) -> Result<Box<dyn Inhibitor>> {
   }
 
   match mode {
-    XSet => ok(xset::XSet::new(Duration::from_secs(60))),
-    _ => Err(anyhow::anyhow!("unknown mode: {:?}", mode)),
+    Xset => ok(xset::XSet::new(Duration::from_secs(60))),
+    Logind => {
+      let conn = zbus::Connection::system().await?;
+      ok(logind::LogindInhibit::new(conn))
+    }
+    Xfce4PowerManager => {
+      let conn = zbus::Connection::session().await?;
+      ok(xfce_power_manager::XfcePowerManager::new(conn))
+    }
+    Xfce4Screensaver => {
+      let conn = zbus::Connection::session().await?;
+      ok(xfce_screen_saver::XfceScreenSaver::new(conn))
+    }
+    MouseJitter => ok(mouse_jitter::MouseJitter::new(Duration::from_secs(60))),
   }
 }
 
@@ -261,7 +300,7 @@ mod mouse_jitter {
   }
 
   impl MouseJitter {
-    fn new(jitter_interval: Duration) -> Self {
+    pub fn new(jitter_interval: Duration) -> Self {
       Self {
         interval: jitter_interval,
         task: None,

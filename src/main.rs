@@ -6,9 +6,10 @@ mod helper;
 mod inhibitor;
 mod protocol;
 
+use inhibitor::InhibitMode;
 use protocol::DurationUpdate;
 
-pub use daemon::{Daemon, InhibitMode};
+pub use daemon::Daemon;
 
 #[derive(Parser)]
 struct Cli {
@@ -19,7 +20,11 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
   /// Start the daemon
-  Daemon,
+  Daemon {
+    /// Inhibit mechanism
+    #[clap(short, long, default_value = "xset", value_enum)]
+    mode: InhibitMode,
+  },
 
   /// Subscribe to status updates
   Monitor,
@@ -40,8 +45,7 @@ async fn main() -> anyhow::Result<()> {
   let cli = Cli::parse();
 
   match cli.cmd {
-    Commands::Daemon => {
-      let mode = InhibitMode::XSet;
+    Commands::Daemon { mode } => {
       let mut daemon = daemon::Daemon::new(mode).await?;
       daemon.run().await.expect("Failed to run daemon");
     }
