@@ -1,28 +1,24 @@
 * Vigilare
 
-Vigilare is a DBus based service to inhibit idle/sleep for X11 desktop users. I wrote this program because I need a status bar widget that allows me:
+Vigilare is a DBus based service to inhibit system sleep for desktop users. I wrote this program because I need a status bar widget that allows me:
 
-- to quickly adjust inhibition time
-- to select the mode between preventing screen dim and preventing system suspend
-- see the up-to-date remaining time in the status bar
-
-And to my knowledge, there is no such program available.
+- to quickly adjust sleep inhibition time via mouse scroll
+- see the accurate remaining time in the status bar
+- has different ways to inhibit sleep
 
 ** Main features
 
-- inhibit idle (i.e. X screensaver)
-- inhibit sleep (i.e. systemd suspend)
+- inhibit sleep modes:
+  + xscreensaver
+  + logind
+  + xfce4 power manager
+  + xfce4 screensaver
+  + simulated mouse activity
 - increase/decrease duration of inhibition
 - set duration of inhibition
-- set inhibition type to idle or sleep
-- monitor for up-to-date remaining inhibition time
-- monitoring and control through dbus interface
+- monitor for real-time remaining inhibition time in json
 - asynchronous, efficient, light on system resources
 
-** Implementation details
-
-- prevent idle by resetting x screensaver timeout (i.e. =xset s reset=)
-- prevent sleep through [[https://www.freedesktop.org/wiki/Software/systemd/inhibit/][logind API]] (i.e. =systemd-inhibit=)
 
 ** Installation
 
@@ -45,20 +41,11 @@ Here's a sample eww widget just for reference:
    (vigilare-toggle-tooltip)
    (eventbox
     :cursor "hand"
-    :onclick { vigilare.mode=="null" ? "vigilare msg -m idle +15m" :
-               vigilare.mode=="sleep" ? "vigilare msg -m idle +0s" :
-               vigilare.mode=="idle" ? "vigilare msg -m sleep +0s" : "" }
-    :onmiddleclick "(notify-send 'Display off in 2 secs'; sleep 2; xset dpms force off) &"
+    :onclick "(notify-send 'Display off in 2 secs'; sleep 2; xset dpms force off) &"
     :onrightclick "(notify-send 'Suspending in 2 secs'; sleep 2; systemctl suspend) &"
     :onscroll "test {} = up && vigilare msg +15m || vigilare msg -15m"
     :class { vigilare.active ? "toggle-enabled" : "toggle-disabled" }
     (box :space-evenly false
-         (box :visible {vigilare.mode=="null"}
-              (icon :text "󰒲"))
-         (box :visible {vigilare.mode=="sleep"}
-              (icon :text "󰒳"))
-         (box :visible {vigilare.mode=="idle"}
-              (icon :text "󰈉"))
          (label :visible {vigilare.mode!="null"} :text "${vigilare.mode}")
          (label :visible {vigilare.message!=""} :text "/${vigilare.message}")))))
 
@@ -66,12 +53,11 @@ Here's a sample eww widget just for reference:
   (box
    :orientation "v"
    :space-evenly false
-   (label :xalign 0 :text "Left-click: toggle mode")
-   (label :xalign 0 :text "Middle-click: screen-off")
+   (label :xalign 0 :text "Left-click: screen-off")
    (label :xalign 0 :text "Right-click: suspend")
    (label :xalign 0 :text "Scroll: adjust duration")))
 #+end_src
 
-You must start the dbus service with =vigilare daemon= before using the widget. I recommend starting it in your X session startup script or systemd user service. An example systemd user service is provided in the repository.
+You must start the dbus service with =vigilare daemon= for the widget to function. I recommend starting it in your X session startup script or systemd user service. An example systemd user service is provided in the repository.
 
 Run =vigilare --help= for detailed usage information.
