@@ -23,7 +23,7 @@ enum Commands {
   /// Start the daemon
   Daemon {
     /// Inhibit mechanism
-    #[clap(short, long, default_value = "xscreensaver", value_enum)]
+    #[clap(short, long, default_value = "mouse-jitter", value_enum)]
     mode: InhibitMode,
   },
 
