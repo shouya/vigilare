@@ -28,8 +28,8 @@ pub enum InhibitMode {
   #[serde(alias = "systemd")]
   Logind,
   /// Reset the XScreenSaver time with `xset s reset`
-  #[serde(rename = "xscreensaver", alias = "xset")]
-  XScreensaver,
+  #[serde(alias = "xset")]
+  Xscreensaver,
   /// Inhibit sleep with occasional mouse jitter
   MouseJitter,
 }
@@ -54,8 +54,8 @@ impl FromStr for InhibitMode {
 
   fn from_str(s: &str) -> Result<Self> {
     match s {
-      "xscreensaver" => Ok(Self::XScreensaver),
-      "xset" => Ok(Self::XScreensaver),
+      "xscreensaver" => Ok(Self::Xscreensaver),
+      "xset" => Ok(Self::Xscreensaver),
       "logind" => Ok(Self::Logind),
       "xfce4-power-manager" => Ok(Self::Xfce4PowerManager),
       "xfce" => Ok(Self::Xfce4PowerManager),
@@ -76,7 +76,7 @@ pub async fn from_mode(mode: InhibitMode) -> Result<Box<dyn Inhibitor>> {
   }
 
   match mode {
-    XScreensaver => {
+    Xscreensaver => {
       ok(xscreensaver::XScreensaver::new(Duration::from_secs(60)))
     }
     Logind => {
