@@ -5,6 +5,7 @@ mod daemon;
 mod helper;
 mod inhibitor;
 mod protocol;
+mod signals;
 
 use inhibitor::InhibitMode;
 use protocol::DurationUpdate;

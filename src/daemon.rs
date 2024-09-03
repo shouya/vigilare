@@ -9,6 +9,7 @@ use zbus::object_server::InterfaceRef;
 use crate::{
   inhibitor::{self, InhibitMode, Inhibitor},
   protocol::{DurationUpdate, Status},
+  signals,
 };
 
 pub struct Daemon {
@@ -21,6 +22,7 @@ enum DaemonEvent {
   DurationUpdate(DurationUpdate),
   StatusRequest(oneshot::Sender<Status>),
   Deadline,
+  ExitSignal,
   DbusServiceExit,
 }
 
@@ -39,12 +41,17 @@ impl Daemon {
   async fn get_event(
     receiver: &mut mpsc::Receiver<DaemonMessage>,
     deadline: &Option<Instant>,
+    exit_signals: &mut signals::ExitSignals,
   ) -> DaemonEvent {
     let sleep = deadline
       .map(|d| tokio::time::sleep_until(d.into()))
       .unwrap_or_else(|| tokio::time::sleep(Duration::MAX));
 
     tokio::select! {
+      _ = exit_signals.recv() => {
+        DaemonEvent::ExitSignal
+      }
+
       msg = receiver.recv() => {
         match msg {
           Some(DaemonMessage::DurationUpdate(update)) => {
@@ -85,6 +92,8 @@ impl Daemon {
         .expect("Failed to emit status changed");
     };
 
+    let mut exit_signals = signals::ExitSignals::new();
+
     info!(
       "Daemon started at {}",
       conn.unique_name().expect("Failed to get unique name")
@@ -92,7 +101,10 @@ impl Daemon {
     status_changed().await;
 
     loop {
-      match Self::get_event(&mut receiver, &self.wake_until).await {
+      let event =
+        Self::get_event(&mut receiver, &self.wake_until, &mut exit_signals);
+
+      match event.await {
         DaemonEvent::DurationUpdate(update) => {
           self.update_duration(update)?;
           self.update_inhibitor().await?;
@@ -105,6 +117,10 @@ impl Daemon {
           self.wake_until = None;
           self.update_inhibitor().await?;
           status_changed().await;
+        }
+        DaemonEvent::ExitSignal => {
+          info!("Received exit signal, exiting");
+          break;
         }
         DaemonEvent::DbusServiceExit => {
           info!("Dbus service exited");

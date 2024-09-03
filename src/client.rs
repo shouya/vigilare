@@ -3,7 +3,10 @@ use std::time::{Duration, SystemTime};
 use futures::StreamExt as _;
 use serde::Serialize;
 
-use crate::protocol::{DbusVigilareProxy, DurationUpdate, Status};
+use crate::{
+  protocol::{DbusVigilareProxy, DurationUpdate, Status},
+  signals::ExitSignals,
+};
 
 pub async fn msg(update: DurationUpdate) -> Result<(), zbus::Error> {
   let conn = zbus::Connection::session().await?;
@@ -83,8 +86,14 @@ async fn monitor() -> zbus::Result<()> {
 
   let mut stream = proxy.receive_status_changed().await;
 
+  let mut exit_signals = ExitSignals::new();
+
   loop {
     tokio::select! {
+      _ = exit_signals.recv() => {
+        eprintln!("Received exit signal, exiting");
+        return Ok(());
+      }
       Some(_) = stream.next() => {
         report.update(&proxy).await?;
       }
