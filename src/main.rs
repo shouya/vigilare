@@ -23,7 +23,7 @@ enum Commands {
   /// Start the daemon
   Daemon {
     /// Inhibit mechanism
-    #[clap(short, long, default_value = "xset", value_enum)]
+    #[clap(short, long, default_value = "xscreensaver", value_enum)]
     mode: InhibitMode,
   },
 
@@ -37,6 +37,9 @@ enum Commands {
     #[clap(value_parser = helper::parse_duration_update, allow_hyphen_values = true)]
     update: DurationUpdate,
   },
+
+  /// List all modes available on the system
+  ListModes,
 }
 
 #[tokio::main]
@@ -55,6 +58,11 @@ async fn main() -> anyhow::Result<()> {
     }
     Commands::Monitor => {
       client::monitor_forever().await.expect("Failed to monitor");
+    }
+    Commands::ListModes => {
+      for mode in inhibitor::available_modes().await {
+        println!("{}", serde_variant::to_variant_name(&mode).unwrap());
+      }
     }
   }
 

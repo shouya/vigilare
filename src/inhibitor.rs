@@ -7,25 +7,46 @@ use zbus::zvariant::Type;
 
 #[async_trait::async_trait]
 pub trait Inhibitor {
+  // Result::Err(_) is equivalent to Ok(false)
   async fn available(&self) -> Result<bool>;
   async fn inhibit(&mut self) -> Result<()>;
   async fn uninhibit(&mut self) -> Result<()>;
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Type, ValueEnum)]
+#[derive(
+  Clone, Copy, Debug, PartialEq, Serialize, Deserialize, Type, ValueEnum,
+)]
 #[serde(rename_all = "kebab-case")]
 #[non_exhaustive]
 pub enum InhibitMode {
-  /// Reset the XScreenSaver time with `xset s reset`
-  Xset,
-  /// Inhibit sleep with `systemd-inhibit`
-  Logind,
   /// Inhibit sleep from xfce4-power-manager
+  #[serde(alias = "xfce", alias = "xfce4")]
   Xfce4PowerManager,
   /// Inhibit sleep from xfce4-screensaver
   Xfce4Screensaver,
+  /// Inhibit sleep with `systemd-inhibit`
+  #[serde(alias = "systemd")]
+  Logind,
+  /// Reset the XScreenSaver time with `xset s reset`
+  #[serde(rename = "xscreensaver", alias = "xset")]
+  XScreensaver,
   /// Inhibit sleep with occasional mouse jitter
   MouseJitter,
+}
+
+pub async fn available_modes() -> Vec<InhibitMode> {
+  let mut modes = Vec::new();
+  for mode in InhibitMode::value_variants() {
+    let inhibitor = from_mode(*mode).await;
+
+    if let Ok(inhibitor) = inhibitor {
+      if inhibitor.available().await.unwrap_or(false) {
+        modes.push(*mode);
+      }
+    }
+  }
+
+  modes
 }
 
 impl FromStr for InhibitMode {
@@ -33,9 +54,11 @@ impl FromStr for InhibitMode {
 
   fn from_str(s: &str) -> Result<Self> {
     match s {
-      "xset" => Ok(Self::Xset),
+      "xscreensaver" => Ok(Self::XScreensaver),
+      "xset" => Ok(Self::XScreensaver),
       "logind" => Ok(Self::Logind),
       "xfce4-power-manager" => Ok(Self::Xfce4PowerManager),
+      "xfce" => Ok(Self::Xfce4PowerManager),
       "xfce4" => Ok(Self::Xfce4PowerManager),
       "xfce4-screensaver" => Ok(Self::Xfce4Screensaver),
       "mouse-jitter" => Ok(Self::MouseJitter),
@@ -53,7 +76,9 @@ pub async fn from_mode(mode: InhibitMode) -> Result<Box<dyn Inhibitor>> {
   }
 
   match mode {
-    Xset => ok(xset::XSet::new(Duration::from_secs(60))),
+    XScreensaver => {
+      ok(xscreensaver::XScreensaver::new(Duration::from_secs(60)))
+    }
     Logind => {
       let conn = zbus::Connection::system().await?;
       ok(logind::LogindInhibit::new(conn))
@@ -70,19 +95,19 @@ pub async fn from_mode(mode: InhibitMode) -> Result<Box<dyn Inhibitor>> {
   }
 }
 
-mod xset {
+mod xscreensaver {
   use std::time::Duration;
 
   use tokio::process::Command;
 
   use super::*;
 
-  pub struct XSet {
+  pub struct XScreensaver {
     interval: Duration,
     task: Option<tokio::task::JoinHandle<()>>,
   }
 
-  impl XSet {
+  impl XScreensaver {
     pub fn new(interval: Duration) -> Self {
       Self {
         interval,
@@ -92,7 +117,7 @@ mod xset {
   }
 
   #[async_trait::async_trait]
-  impl Inhibitor for XSet {
+  impl Inhibitor for XScreensaver {
     async fn available(&self) -> Result<bool> {
       // available if xset binary is found in PATH
       let output = Command::new("which").arg("xset").output().await?;
@@ -165,7 +190,8 @@ mod logind {
   #[async_trait::async_trait]
   impl Inhibitor for LogindInhibit {
     async fn available(&self) -> Result<bool> {
-      Ok(LogindManagerProxy::new(&self.conn).await.is_ok())
+      let proxy = LogindManagerProxy::new(&self.conn).await?;
+      Ok(proxy.0.introspect().await.is_ok())
     }
 
     async fn inhibit(&mut self) -> Result<()> {
@@ -221,7 +247,8 @@ mod xfce_power_manager {
   #[async_trait::async_trait]
   impl Inhibitor for XfcePowerManager {
     async fn available(&self) -> Result<bool> {
-      Ok(XfcePowerManagerProxy::new(&self.conn).await.is_ok())
+      let proxy = XfcePowerManagerProxy::new(&self.conn).await?;
+      Ok(proxy.0.introspect().await.is_ok())
     }
 
     async fn inhibit(&mut self) -> Result<()> {
@@ -275,7 +302,8 @@ mod xfce_screen_saver {
   #[async_trait::async_trait]
   impl Inhibitor for XfceScreenSaver {
     async fn available(&self) -> Result<bool> {
-      Ok(XfceScreenSaverProxy::new(&self.conn).await.is_ok())
+      let proxy = XfceScreenSaverProxy::new(&self.conn).await?;
+      Ok(proxy.0.introspect().await.is_ok())
     }
 
     async fn inhibit(&mut self) -> Result<()> {
