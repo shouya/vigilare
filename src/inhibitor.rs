@@ -20,18 +20,21 @@ pub trait Inhibitor {
 #[non_exhaustive]
 pub enum InhibitMode {
   /// Inhibit sleep from xfce4-power-manager
-  #[serde(alias = "xfce", alias = "xfce4")]
+  #[value(alias = "xfce", alias = "xfce4")]
   Xfce4PowerManager,
   /// Inhibit sleep from xfce4-screensaver
   Xfce4Screensaver,
   /// Inhibit sleep with `systemd-inhibit`
-  #[serde(alias = "systemd")]
+  #[value(alias = "systemd")]
   Logind,
   /// Reset the XScreenSaver time with `xset s reset`
-  #[serde(alias = "xset")]
+  #[value(alias = "xset")]
   Xscreensaver,
   /// Inhibit sleep with occasional mouse jitter
   MouseJitter,
+  /// Inhibit sleep with a dummy audio playback
+  #[value(alias = "audio")]
+  AudioPlayback,
 }
 
 pub async fn available_modes() -> Vec<InhibitMode> {
@@ -63,6 +66,7 @@ impl FromStr for InhibitMode {
       "xfce4-screensaver" => Ok(Self::Xfce4Screensaver),
       "mouse-jitter" => Ok(Self::MouseJitter),
       "mouse" => Ok(Self::MouseJitter),
+      "audio" => Ok(Self::AudioPlayback),
       _ => Err(anyhow::anyhow!("unknown mechanism: {}", s)),
     }
   }
@@ -92,6 +96,7 @@ pub async fn from_mode(mode: InhibitMode) -> Result<Box<dyn Inhibitor>> {
       ok(xfce_screen_saver::XfceScreenSaver::new(conn))
     }
     MouseJitter => ok(mouse_jitter::MouseJitter::new(Duration::from_secs(60))),
+    AudioPlayback => ok(audio::AudioPlayback::new()),
   }
 }
 
@@ -403,6 +408,114 @@ mod mouse_jitter {
         task.abort();
       }
       Ok(())
+    }
+  }
+}
+
+mod audio {
+  use super::*;
+  use std::sync::atomic::AtomicU8;
+  use tokio::sync::mpsc::{channel, Receiver, Sender};
+
+  pub(super) struct AudioPlayback {
+    handle: PlayerHandle,
+  }
+
+  struct PlayerHandle {
+    available: AtomicU8, // 0: unknown, 1: available, 2: not available
+    control: Sender<bool>,
+    handle: tokio::task::JoinHandle<Result<()>>,
+  }
+
+  impl PlayerHandle {
+    fn available(&self) -> bool {
+      match self.available.load(std::sync::atomic::Ordering::SeqCst) {
+        1 => return true,
+        2 => return false,
+        0 => {}
+        _ => unreachable!("Invalid state"),
+      }
+
+      // if the thread is not running, we assume it's available
+      if self.control.is_closed() && self.handle.is_finished() {
+        self.available.store(2, std::sync::atomic::Ordering::SeqCst);
+        return false;
+      }
+
+      // otherwise, we assume it's available
+      self.available.store(1, std::sync::atomic::Ordering::SeqCst);
+      true
+    }
+
+    async fn inhibit(&self) -> Result<()> {
+      if !self.available() {
+        return Err(anyhow::anyhow!("Audio playback is not available"));
+      }
+
+      // send a signal to start playback
+      self.control.send(true).await?;
+      Ok(())
+    }
+
+    async fn uninhibit(&self) -> Result<()> {
+      if !self.available() {
+        return Err(anyhow::anyhow!("Audio playback is not available"));
+      }
+
+      // send a signal to stop playback
+      self.control.send(false).await?;
+      Ok(())
+    }
+
+    fn start() -> Self {
+      let (control_tx, control_rx) = channel(1);
+      let handle = tokio::task::spawn_blocking(|| Self::run(control_rx));
+      Self {
+        available: AtomicU8::new(0), // 0: unknown
+        control: control_tx,
+        handle
+      }
+    }
+
+    fn run(mut control_rx: Receiver<bool>) -> Result<()> {
+      // try to get the default output stream, if fails, return an error
+      drop(rodio::OutputStream::try_default()?);
+      let mut holder = Option::None;
+
+      while let Some(play) = control_rx.blocking_recv() {
+        if !play {
+          drop(holder.take());
+          continue;
+        }
+
+        if play && holder.is_some() {
+          continue; // already playing
+        }
+
+        let _ = holder.insert(rodio::OutputStream::try_default()?);
+      }
+
+      Ok(())
+    }
+  }
+
+  impl AudioPlayback {
+    pub fn new() -> Self {
+      Self {  handle: PlayerHandle::start() }
+    }
+  }
+
+  #[async_trait::async_trait]
+  impl Inhibitor for AudioPlayback {
+    async fn available(&self) -> Result<bool> {
+      Ok(self.handle.available())
+    }
+
+    async fn inhibit(&mut self) -> Result<()> {
+      self.handle.inhibit().await
+    }
+    async fn uninhibit(&mut self) -> Result<()> {
+      self.handle.uninhibit().await
     }
   }
 }

@@ -9,11 +9,11 @@
     utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
-        deps = [ pkgs.xdotool ];
+        deps = with pkgs; [ xdotool alsa-lib ];
         naersk-lib = pkgs.callPackage naersk {};
       in
       {
-        defaultPackage = with pkgs; naersk-lib.buildPackage {
+        defaultPackage = naersk-lib.buildPackage {
           buildInputs = deps;
           src = ./.;
           preBuild = ''
@@ -28,7 +28,8 @@
             pre-commit
             rustPackages.clippy
             rust-analyzer
-          ];
+            pkg-config
+          ] ++ deps;
 
           RUST_SRC_PATH = rustPlatform.rustLibSrc;
         };
