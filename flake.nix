@@ -14,6 +14,9 @@
       in
       {
         defaultPackage = naersk-lib.buildPackage {
+          nativeBuildInputs = with pkgs; [
+            pkg-config
+          ];
           buildInputs = deps;
           src = ./.;
           preBuild = ''
