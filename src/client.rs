@@ -121,3 +121,10 @@ pub async fn monitor_forever() -> zbus::Result<()> {
     }
   }
 }
+
+pub async fn status() -> zbus::Result<Status> {
+  let conn = zbus::Connection::session().await?;
+  let proxy = DbusVigilareProxy::new(&conn).await?;
+
+  proxy.status().await
+}

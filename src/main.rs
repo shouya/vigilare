@@ -38,6 +38,9 @@ enum Commands {
     update: DurationUpdate,
   },
 
+  /// Get the current status from the daemon
+  Status,
+
   /// List all modes available on the system
   ListModes,
 }
@@ -59,12 +62,37 @@ async fn main() -> anyhow::Result<()> {
     Commands::Monitor => {
       client::monitor_forever().await.expect("Failed to monitor");
     }
+    Commands::Status => {
+      let status = client::status().await?;
+      print_status(status)?;
+    }
     Commands::ListModes => {
       for mode in inhibitor::available_modes().await {
         println!("{}", serde_variant::to_variant_name(&mode).unwrap());
       }
     }
   }
+
+  Ok(())
+}
+
+fn print_status(status: protocol::Status) -> anyhow::Result<()> {
+  use time::format_description::well_known::Rfc3339;
+  use time::{OffsetDateTime, UtcOffset};
+
+  println!("active: {}", status.active);
+  if !status.active {
+    return Ok(());
+  }
+
+  let offset = UtcOffset::current_local_offset()?;
+  let wake_until =
+    OffsetDateTime::from_unix_timestamp(status.wake_until as i64)?
+      .to_offset(offset);
+  let now = OffsetDateTime::now_utc().replace_microsecond(0)?;
+  let duration = wake_until - now;
+
+  println!("wake until: {} ({})", wake_until.format(&Rfc3339)?, duration);
 
   Ok(())
 }
